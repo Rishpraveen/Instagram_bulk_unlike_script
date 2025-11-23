@@ -59,10 +59,10 @@ An advanced browser-based JavaScript automation script that enables bulk unlikin
 - Access to browser Developer Console
 
 ### Step-by-Step Guide
-
+after logging in 
 1. **Navigate to Instagram**
    ```
-   https://www.instagram.com/your_username/saved/
+   https://www.instagram.com/your_activity/interactions/likes/
    ```
    Or navigate to any page showing posts you've liked
 
