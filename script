@@ -1,0 +1,589 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// Instagram Bulk Unlike Script - Enhanced Anti-Detection Version
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️  WARNING: Use at your own risk. This violates Instagram's Terms of Service.
+// ⚠️  Your account may be flagged, rate-limited, or banned.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ✅ Enhanced Configuration
+const CONFIG = {
+    batch: {
+        min: 45,                    // Minimum items per batch
+        max: 75,                    // Maximum items per batch
+        smallBatch: {               // Occasional smaller batches (more human)
+            probability: 0.25,      // 25% chance
+            min: 20,
+            max: 40
+        }
+    },
+    delays: {
+        betweenActions: { min: 1500, max: 3000 },
+        betweenCheckbox: { min: 100, max: 350 },
+        afterSelect: { min: 2000, max: 3500 },
+        afterItemsVisible: { min: 2000, max: 3000 },
+        betweenBatches: { min: 4000, max: 10000 },
+        extendedPause: {            // Random long pauses
+            probability: 0.12,      // 12% chance after batch
+            min: 20000,             // 20 seconds
+            max: 60000              // 60 seconds
+        }
+    },
+    breaks: {
+        short: {
+            probability: 0.18,      // 18% chance
+            min: 15000,             // 15 seconds
+            max: 45000              // 45 seconds
+        },
+        long: {
+            probability: 0.06,      // 6% chance
+            min: 90000,             // 1.5 minutes
+            max: 240000             // 4 minutes
+        }
+    },
+    safety: {
+        maxRetries: 60,
+        maxSessionDuration: 3600000,    // 1 hour max
+        maxDailyUnlikes: 4000,          // Safety limit
+        checkBlockEvery: 5              // Check for blocks every N batches
+    },
+    behavior: {
+        scrollVariance: 0.25,           // Scroll 75-100% of page
+        readingProbability: 0.20,       // 20% chance to simulate reading
+        hoverProbability: 0.40,         // 40% chance to hover before click
+        reverseSelectionProb: 0.15,     // 15% chance to select in reverse
+        randomSelectionProb: 0.10       // 10% chance for random order
+    }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Session Tracking
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SESSION = {
+    startTime: Date.now(),
+    totalUnliked: 0,
+    consecutiveBatches: 0,
+    blockDetectionCount: 0,
+    errors: []
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Utility Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+const randomFloat = (min, max) => Math.random() * (max - min) + min;
+
+const randomDelay = (min, max) => delay(randomInt(min, max));
+
+const logWithTimestamp = (message, type = 'info') => {
+    const timestamp = new Date().toLocaleTimeString();
+    const emoji = {
+        info: 'ℹ️',
+        success: '✅',
+        warning: '⚠️',
+        error: '❌',
+        stats: '📊'
+    }[type] || 'ℹ️';
+    console.log(`[${timestamp}] ${emoji} ${message}`);
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Human Behavior Simulation
+// ═══════════════════════════════════════════════════════════════════════════
+
+const addMouseJitter = () => {
+    const intensity = Math.random() > 0.6 ? 15 : 8;
+    const jitterX = (Math.random() - 0.5) * intensity;
+    const jitterY = (Math.random() - 0.5) * intensity;
+    window.scrollBy({ top: jitterY, left: jitterX, behavior: 'auto' });
+};
+
+const simulateReading = async () => {
+    if (Math.random() < CONFIG.behavior.readingProbability) {
+        const readDuration = randomInt(3000, 8000);
+        logWithTimestamp(`Simulating reading for ${(readDuration / 1000).toFixed(1)}s...`, 'info');
+        
+        // Subtle scroll movements while reading
+        const scrollAmount = randomInt(-150, 150);
+        window.scrollBy({ top: scrollAmount, behavior: 'smooth' });
+        
+        await delay(readDuration);
+        
+        // Small adjustment scroll
+        if (Math.random() > 0.5) {
+            await delay(randomInt(300, 800));
+            window.scrollBy({ top: randomInt(-50, 50), behavior: 'smooth' });
+        }
+    }
+};
+
+const naturalScroll = async (targetY, behavior = 'smooth') => {
+    // Sometimes scroll in multiple steps (more human)
+    if (Math.random() > 0.7) {
+        const steps = randomInt(2, 4);
+        const stepSize = targetY / steps;
+        
+        for (let i = 0; i < steps; i++) {
+            window.scrollBy({ top: stepSize, behavior: 'smooth' });
+            await delay(randomInt(200, 600));
+        }
+    } else {
+        window.scrollTo({ top: targetY, behavior });
+    }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DOM Interaction Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+const waitForElement = async (selector, timeout = 30000) => {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        const el = document.querySelector(selector);
+        if (el) return el;
+        await delay(150);
+    }
+    throw new Error(`Element "${selector}" not found within ${timeout}ms`);
+};
+
+const clickElement = async (element) => {
+    if (!element) throw new Error("Element not found");
+    
+    // Random hover before click
+    if (Math.random() < CONFIG.behavior.hoverProbability) {
+        element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        await randomDelay(150, 500);
+    }
+    
+    // Scroll element into view
+    const scrollBehavior = Math.random() > 0.3 ? "smooth" : "auto";
+    element.scrollIntoView({ behavior: scrollBehavior, block: "center" });
+    
+    // Delay before clicking
+    await randomDelay(250, 800);
+    
+    // Mouse jitter
+    addMouseJitter();
+    
+    // Click
+    element.click();
+    
+    // Post-click mouse movement
+    if (Math.random() > 0.6) {
+        await delay(randomInt(100, 300));
+        addMouseJitter();
+    }
+};
+
+const findSelectButton = () => {
+    return Array.from(document.querySelectorAll("span"))
+        .find(el => el.textContent.trim().toLowerCase() === "select");
+};
+
+const waitForSelectButton = async () => {
+    for (let i = 0; i < CONFIG.safety.maxRetries; i++) {
+        const selectButton = findSelectButton();
+        if (selectButton) return selectButton;
+        await randomDelay(1000, 1500);
+    }
+    throw new Error("Select button not found after maximum retries");
+};
+
+const findUnlikeButton = () => {
+    return Array.from(document.querySelectorAll("span"))
+        .find(el => el.textContent.trim() === "Unlike");
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Checkbox Selection Logic
+// ═══════════════════════════════════════════════════════════════════════════
+
+const selectCheckboxes = async (checkboxes, count) => {
+    const itemsToSelect = Math.min(count, checkboxes.length);
+    let checkboxArray = Array.from(checkboxes).slice(0, itemsToSelect);
+    
+    // Apply selection pattern variation
+    const rand = Math.random();
+    if (rand < CONFIG.behavior.reverseSelectionProb) {
+        checkboxArray.reverse();
+        logWithTimestamp('Using reverse selection pattern', 'info');
+    } else if (rand < CONFIG.behavior.reverseSelectionProb + CONFIG.behavior.randomSelectionProb) {
+        checkboxArray.sort(() => Math.random() - 0.5);
+        logWithTimestamp('Using random selection pattern', 'info');
+    }
+    
+    for (let i = 0; i < checkboxArray.length; i++) {
+        await clickElement(checkboxArray[i]);
+        
+        // Variable delay between selections
+        await randomDelay(
+            CONFIG.delays.betweenCheckbox.min,
+            CONFIG.delays.betweenCheckbox.max
+        );
+        
+        // Occasional longer pause (distraction simulation)
+        if (Math.random() > 0.88) {
+            await randomDelay(800, 2000);
+        }
+        
+        // Very rare reading simulation mid-selection
+        if (Math.random() > 0.96) {
+            await simulateReading();
+        }
+    }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Unlike Action
+// ═══════════════════════════════════════════════════════════════════════════
+
+const unlikeSelectedItems = async () => {
+    try {
+        const unlikeButton = findUnlikeButton();
+        if (!unlikeButton) throw new Error("Unlike button not found");
+        
+        await clickElement(unlikeButton);
+        await randomDelay(
+            CONFIG.delays.betweenActions.min,
+            CONFIG.delays.betweenActions.max
+        );
+        
+        // Wait for and click confirmation button
+        const confirmButton = await waitForElement('button[tabindex="0"]');
+        await clickElement(confirmButton);
+        
+        return true;
+    } catch (err) {
+        logWithTimestamp(`Error during unlike: ${err.message}`, 'error');
+        SESSION.errors.push({ time: Date.now(), error: err.message });
+        throw err;
+    }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Scrolling & Content Loading
+// ═══════════════════════════════════════════════════════════════════════════
+
+const scrollAndWaitForMoreItems = async (previousCount) => {
+    // Calculate scroll target with variance
+    const scrollFactor = randomFloat(
+        1 - CONFIG.behavior.scrollVariance,
+        1
+    );
+    const scrollDistance = document.body.scrollHeight * scrollFactor;
+    
+    // Natural scroll with possible steps
+    await naturalScroll(scrollDistance);
+    
+    // Additional small adjustment scroll
+    if (Math.random() > 0.7) {
+        await delay(randomInt(300, 800));
+        window.scrollBy({ top: randomInt(100, 200), behavior: "smooth" });
+    }
+    
+    // Wait for new content to load
+    for (let i = 0; i < 12; i++) {
+        await randomDelay(1000, 1800);
+        const currentCount = document.querySelectorAll('[aria-label="Toggle checkbox"]').length;
+        if (currentCount > previousCount) {
+            logWithTimestamp(`Loaded ${currentCount - previousCount} more items`, 'success');
+            return true;
+        }
+    }
+    
+    return false;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Safety & Detection Systems
+// ═══════════════════════════════════════════════════════════════════════════
+
+const checkForBlockDetection = () => {
+    const pageText = document.body.innerText.toLowerCase();
+    const blockIndicators = [
+        "try again later",
+        "action blocked",
+        "suspicious activity",
+        "too many requests",
+        "temporarily unavailable",
+        "unusual activity",
+        "spam",
+        "violating",
+        "wait a few minutes",
+        "slow down",
+        "limit exceeded"
+    ];
+    
+    for (const indicator of blockIndicators) {
+        if (pageText.includes(indicator)) {
+            logWithTimestamp(`⛔ Block indicator detected: "${indicator}"`, 'error');
+            SESSION.blockDetectionCount++;
+            return true;
+        }
+    }
+    return false;
+};
+
+const checkSessionLimits = () => {
+    const elapsed = Date.now() - SESSION.startTime;
+    
+    if (elapsed > CONFIG.safety.maxSessionDuration) {
+        logWithTimestamp('Maximum session duration reached', 'warning');
+        return false;
+    }
+    
+    if (SESSION.totalUnliked >= CONFIG.safety.maxDailyUnlikes) {
+        logWithTimestamp(`Maximum daily limit (${CONFIG.safety.maxDailyUnlikes}) reached`, 'warning');
+        return false;
+    }
+    
+    if (SESSION.blockDetectionCount >= 3) {
+        logWithTimestamp('Multiple block detections - stopping for safety', 'error');
+        return false;
+    }
+    
+    return true;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Break & Pause Logic
+// ═══════════════════════════════════════════════════════════════════════════
+
+const takeBreak = async () => {
+    // Long break (rare)
+    if (Math.random() < CONFIG.breaks.long.probability) {
+        const duration = randomInt(CONFIG.breaks.long.min, CONFIG.breaks.long.max);
+        logWithTimestamp(`Taking LONG break for ${(duration / 60000).toFixed(1)} minutes`, 'warning');
+        await delay(duration);
+        SESSION.consecutiveBatches = 0;
+        return;
+    }
+    
+    // Short break
+    if (Math.random() < CONFIG.breaks.short.probability) {
+        const duration = randomInt(CONFIG.breaks.short.min, CONFIG.breaks.short.max);
+        logWithTimestamp(`Taking short break for ${(duration / 1000).toFixed(1)}s`, 'info');
+        await delay(duration);
+        return;
+    }
+    
+    // Extended pause after many batches
+    if (SESSION.consecutiveBatches >= 15) {
+        if (Math.random() < CONFIG.delays.extendedPause.probability) {
+            const duration = randomInt(
+                CONFIG.delays.extendedPause.min,
+                CONFIG.delays.extendedPause.max
+            );
+            logWithTimestamp(`Extended pause after ${SESSION.consecutiveBatches} batches`, 'info');
+            await delay(duration);
+            SESSION.consecutiveBatches = 0;
+        }
+    }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Batch Size Calculation
+// ═══════════════════════════════════════════════════════════════════════════
+
+const getBatchSize = () => {
+    // Occasionally use smaller batches
+    if (Math.random() < CONFIG.batch.smallBatch.probability) {
+        return randomInt(
+            CONFIG.batch.smallBatch.min,
+            CONFIG.batch.smallBatch.max
+        );
+    }
+    return randomInt(CONFIG.batch.min, CONFIG.batch.max);
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Main Execution Loop
+// ═══════════════════════════════════════════════════════════════════════════
+
+const removeLikes = async () => {
+    let batchCount = 0;
+    
+    try {
+        while (checkSessionLimits()) {
+            // Periodic block detection
+            if (batchCount % CONFIG.safety.checkBlockEvery === 0 && checkForBlockDetection()) {
+                const pauseDuration = randomInt(300000, 600000); // 5-10 minutes
+                logWithTimestamp(`Instagram block detected! Pausing for ${(pauseDuration / 60000).toFixed(1)} minutes...`, 'error');
+                await delay(pauseDuration);
+                
+                // Re-check after pause
+                if (checkForBlockDetection()) {
+                    logWithTimestamp('Still blocked after pause - stopping script', 'error');
+                    break;
+                }
+                continue;
+            }
+
+            // Find and click "Select" button
+            const selectSpan = findSelectButton();
+            if (!selectSpan) {
+                logWithTimestamp('Select button not found - retrying...', 'warning');
+                await randomDelay(2000, 4000);
+                continue;
+            }
+            
+            await clickElement(selectSpan.parentElement);
+            await randomDelay(
+                CONFIG.delays.afterSelect.min,
+                CONFIG.delays.afterSelect.max
+            );
+
+            // Get checkboxes
+            let checkboxes = document.querySelectorAll('[aria-label="Toggle checkbox"]');
+            
+            // Scroll to load more if needed
+            if (checkboxes.length === 0) {
+                logWithTimestamp('No items visible - scrolling to load more...', 'info');
+                const loaded = await scrollAndWaitForMoreItems(0);
+                
+                if (!loaded) {
+                    logWithTimestamp('No more items to unlike - process complete!', 'success');
+                    break;
+                }
+                
+                checkboxes = document.querySelectorAll('[aria-label="Toggle checkbox"]');
+                if (checkboxes.length === 0) {
+                    logWithTimestamp('Still no items after scroll - ending', 'warning');
+                    break;
+                }
+            }
+
+            await randomDelay(
+                CONFIG.delays.afterItemsVisible.min,
+                CONFIG.delays.afterItemsVisible.max
+            );
+
+            // Calculate batch size and select items
+            const batchSize = getBatchSize();
+            const actualCount = Math.min(batchSize, checkboxes.length);
+            
+            logWithTimestamp(`Selecting ${actualCount} items...`, 'info');
+            await selectCheckboxes(checkboxes, actualCount);
+            
+            batchCount++;
+            SESSION.totalUnliked += actualCount;
+            SESSION.consecutiveBatches++;
+            
+            logWithTimestamp(
+                `Batch ${batchCount}: Selected ${actualCount} items | Total: ${SESSION.totalUnliked}`,
+                'stats'
+            );
+
+            // Unlike the selected items
+            await randomDelay(
+                CONFIG.delays.betweenActions.min,
+                CONFIG.delays.betweenActions.max
+            );
+            
+            await unlikeSelectedItems();
+            logWithTimestamp(`Successfully unliked ${actualCount} items`, 'success');
+            
+            // Wait for UI to reset
+            await randomDelay(
+                CONFIG.delays.betweenActions.min,
+                CONFIG.delays.betweenActions.max
+            );
+            
+            await waitForSelectButton();
+            
+            await randomDelay(
+                CONFIG.delays.betweenActions.min,
+                CONFIG.delays.betweenActions.max
+            );
+            
+            // Delay between batches
+            await randomDelay(
+                CONFIG.delays.betweenBatches.min,
+                CONFIG.delays.betweenBatches.max
+            );
+            
+            // Take random breaks
+            await takeBreak();
+            
+            // Occasional reading simulation
+            if (Math.random() < 0.15) {
+                await simulateReading();
+            }
+        }
+    } catch (err) {
+        logWithTimestamp(`Fatal error: ${err.message}`, 'error');
+        SESSION.errors.push({ time: Date.now(), error: err.message, stack: err.stack });
+    } finally {
+        printSessionSummary();
+    }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Session Summary
+// ═══════════════════════════════════════════════════════════════════════════
+
+const printSessionSummary = () => {
+    const elapsed = Date.now() - SESSION.startTime;
+    const minutes = (elapsed / 60000).toFixed(1);
+    const rate = SESSION.totalUnliked > 0 ? (SESSION.totalUnliked / (elapsed / 60000)).toFixed(1) : 0;
+    
+    console.log('\n' + '═'.repeat(70));
+    console.log('📊 SESSION SUMMARY');
+    console.log('═'.repeat(70));
+    console.log(`⏰ Start time: ${new Date(SESSION.startTime).toLocaleTimeString()}`);
+    console.log(`⏰ End time: ${new Date().toLocaleTimeString()}`);
+    console.log(`⌛ Duration: ${minutes} minutes`);
+    console.log(`✅ Total unliked: ${SESSION.totalUnliked}`);
+    console.log(`📈 Average rate: ${rate} unlikes/minute`);
+    console.log(`⚠️  Block detections: ${SESSION.blockDetectionCount}`);
+    console.log(`❌ Errors: ${SESSION.errors.length}`);
+    
+    if (SESSION.errors.length > 0) {
+        console.log('\n🔍 Error Log:');
+        SESSION.errors.forEach((err, i) => {
+            console.log(`  ${i + 1}. [${new Date(err.time).toLocaleTimeString()}] ${err.error}`);
+        });
+    }
+    
+    console.log('═'.repeat(70) + '\n');
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Script Initialization
+// ═══════════════════════════════════════════════════════════════════════════
+
+(async () => {
+    // Verify on Instagram
+    if (!window.location.hostname.includes("instagram.com")) {
+        console.error("❌ This script only runs on Instagram.com");
+        return;
+    }
+    
+    console.log('\n' + '═'.repeat(70));
+    console.log('🚀 INSTAGRAM BULK UNLIKE SCRIPT');
+    console.log('═'.repeat(70));
+    console.log('⚠️  WARNING: This violates Instagram Terms of Service');
+    console.log('⚠️  Use at your own risk - account may be flagged or banned');
+    console.log('═'.repeat(70));
+    console.log('\n⚙️  Configuration:');
+    console.log(`   • Batch size: ${CONFIG.batch.min}-${CONFIG.batch.max} items`);
+    console.log(`   • Small batch chance: ${(CONFIG.batch.smallBatch.probability * 100)}%`);
+    console.log(`   • Short break chance: ${(CONFIG.breaks.short.probability * 100)}%`);
+    console.log(`   • Long break chance: ${(CONFIG.breaks.long.probability * 100)}%`);
+    console.log(`   • Max session: ${CONFIG.safety.maxSessionDuration / 60000} minutes`);
+    console.log(`   • Max daily unlikes: ${CONFIG.safety.maxDailyUnlikes}`);
+    console.log(`   • Reading simulation: ${(CONFIG.behavior.readingProbability * 100)}%`);
+    console.log('\n' + '═'.repeat(70));
+    console.log(`⏰ Starting at: ${new Date().toLocaleTimeString()}`);
+    console.log('═'.repeat(70) + '\n');
+    
+    await delay(2000); // Brief pause before starting
+    
+    await removeLikes();
+    
+    console.log('✅ Script execution completed');
+})();
